@@ -1,54 +1,179 @@
 import { handleRemoteGame } from '../controller/remoteGameController.js';
+import { findorCreateMatch } from '../services/matchStateService.js';
 import { authenticate } from '../services/jwtService.js';
 import { trackUserActivity } from '../services/lastSeenService.js';
 
 async function remoteGameRoutes(fastify, options) {
-    fastify.get('/remote-game/:matchId', { websocket: true }, async (connection, request) => {
-        console.log('🔌 WebSocket connection attempt:', {
-            matchId: request?.params?.matchId || 'undefined',
-            username: request?.query?.username || null,
-            hasSocket: !!connection.socket,
-            socketType: typeof connection.socket,
-            connectionKeys: Object.keys(connection),
-            requestKeys: request ? Object.keys(request) : 'request is undefined'
-        });
-        
-        // Check if this is a WebSocket upgrade request
-        if (!connection.socket) {
-            console.error('❌ No WebSocket connection available');
-            return;
+    console.log('Registering remote game routes with prefix:', options.prefix || 'none');
+    
+    // Helper function to extract username from WebSocket connection
+    const extractUsername = (request) => {
+        // Try to get username from query params first
+        if (request.query?.username) {
+            return request.query.username;
         }
         
-        // Check if request params are available
-        if (!request || !request.params || !request.params.matchId) {
-            console.error('❌ Invalid request parameters');
-            if (connection.socket && connection.socket.readyState === 1) {
-                connection.socket.close(1002, 'Invalid request parameters');
+        // Try to get from headers (if passed via token)
+        const authHeader = request.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            try {
+                const token = authHeader.substring(7);
+                const decoded = authenticate(token);
+                return decoded.username;
+            } catch (error) {
+                console.log('Failed to authenticate token:', error.message);
             }
-            return;
         }
         
+        // Try to get from cookies (if using cookie-based auth)
+        if (request.cookies?.token) {
+            try {
+                const decoded = authenticate(request.cookies.token);
+                return decoded.username;
+            } catch (error) {
+                console.log('Failed to authenticate cookie token:', error.message);
+            }
+        }
+        
+        return 'Anonymous';
+    };
+
+    // Main matchmaking endpoint
+    fastify.get('/find-match', { 
+        websocket: true 
+    }, async (connection, request) => {
+        let socket;
         try {
-            const username = request.query?.username || null;
-            console.log('✅ WebSocket connection established, calling handleRemoteGame');
-            await handleRemoteGame(connection.socket, request.params.matchId, username);
+            console.log('=== FIND MATCH WEBSOCKET CONNECTION ===');
+            console.log('Connection object:', !!connection);
+            console.log('Query params:', request.query);
+            
+            // Get the socket from connection
+            socket = connection.socket || connection;
+            
+            if (!socket) {
+                throw new Error('No WebSocket connection available');
+            }
+            
+            console.log('Socket ready state:', socket.readyState);
+            
+            // Extract username with better authentication handling
+            const username = extractUsername(request);
+            console.log('Finding/creating match for user:', username);
+            
+            // Track user activity if we have proper authentication
+            if (username !== 'Anonymous') {
+                try {
+                    await trackUserActivity(username);
+                } catch (error) {
+                    console.log('Failed to track user activity:', error.message);
+                    // Don't fail the connection for this
+                }
+            }
+            
+            // Find or create match with better error handling
+            let matchResult;
+            try {
+                matchResult = await findorCreateMatch(socket, username);
+                console.log('Match result:', matchResult);
+            } catch (error) {
+                if (error.message === 'You are already in this match!') {
+                    // Handle duplicate connection attempt
+                    socket.send(JSON.stringify({
+                        type: 'error',
+                        message: 'You are already connected to a match. Please wait or refresh the page.'
+                    }));
+                    socket.close(1008, 'Duplicate connection');
+                    return;
+                }
+                throw error;
+            }
+            
+            const { matchId, created, reconnected } = matchResult;
+            
+            // Send match assignment to client
+            socket.send(JSON.stringify({
+                type: 'match-assigned',
+                matchId: matchId,
+                created: created,
+                reconnected: reconnected || false
+            }));
+            
+            // Handle the game
+            await handleRemoteGame(socket, matchId, username);
+            
         } catch (error) {
-            console.error('❌ Error in remote game route:', error);
-            if (connection.socket && connection.socket.readyState === 1) {
-                connection.socket.close(1011, 'Internal server error');
+            console.error('Match finding error:', error);
+            console.error('Error stack:', error.stack);
+            
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({
+                    type: 'error',
+                    message: error.message
+                }));
+                socket.close(1002, error.message);
             }
         }
     });
-    
-    // Add a simple test route to verify WebSocket is working
-    fastify.get('/test-ws', { websocket: true }, async (connection, request) => {
-        console.log('🧪 Test WebSocket connection');
-        if (connection.socket) {
-            connection.socket.send(JSON.stringify({ type: 'test', message: 'WebSocket is working!' }));
-            console.log('✅ Test WebSocket sent message');
-        } else {
-            console.log('❌ Test WebSocket failed');
+
+    // Direct game connection endpoint (kept for backward compatibility)
+    fastify.get('/remote-game/:matchId', { 
+        websocket: true 
+    }, async (connection, request) => {
+        let socket;
+        try {
+            console.log('=== DIRECT REMOTE GAME CONNECTION ===');
+            console.log('Match ID:', request.params.matchId);
+            console.log('Query params:', request.query);
+            
+            socket = connection.socket || connection;
+            
+            if (!socket) {
+                throw new Error('No WebSocket connection available');
+            }
+            
+            const matchId = request.params.matchId;
+            const username = extractUsername(request);
+            
+            // Validate matchId
+            if (!matchId || isNaN(parseInt(matchId))) {
+                throw new Error(`Invalid match ID: ${matchId}`);
+            }
+            
+            // Track user activity if authenticated
+            if (username !== 'Anonymous') {
+                try {
+                    await trackUserActivity(username);
+                } catch (error) {
+                    console.log('Failed to track user activity:', error.message);
+                }
+            }
+            
+            await handleRemoteGame(socket, matchId, username);
+            
+        } catch (error) {
+            console.error('Direct remote game connection error:', error);
+            console.error('Error stack:', error.stack);
+            
+            if (socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({
+                    type: 'error',
+                    message: error.message
+                }));
+                socket.close(1002, error.message);
+            }
         }
+    });
+
+    // Debug endpoint to check active matches (remove in production)
+    fastify.get('/debug/matches', async (request, reply) => {
+        const { activeMatches, waitingPlayers } = await import('../services/matchStateService.js');
+        
+        return {
+            activeMatches: Array.from(activeMatches.keys()),
+            waitingPlayers: Array.from(waitingPlayers.keys()),
+            timestamp: new Date().toISOString()
+        };
     });
 }
 

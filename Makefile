@@ -1,65 +1,33 @@
 # Makefile for ft_transcendence project
 
-COMPOSE = docker compose
-VAULT_CONTAINER = ft_transcendence-vault-1
+# Directories to persist data
+PERSIST_DIRS = persist/sqlite persist/avatars
+GET_IP := $(shell node get_ip.js 2>/dev/null || echo 'localhost')
 
-all: backend-install build up
 
-backend-install:
-	cd backend && npm install
+all: up
 
-build:
-	$(COMPOSE) build
+init-dirs:
+	@mkdir -p $(PERSIST_DIRS)
+	
+build: init-dirs
+	@echo  "Starting with IP: $(GET_IP)"
+	HOST_IP=$(GET_IP) docker-compose build 
 
-up:
-	$(COMPOSE) up --build -d
-
-# vault-init:
-# 	$(COMPOSE) up -d vault
-# # 	@echo "Waiting for Vault to be ready..."
-# # 	@until curl -s http://127.0.0.1:8222/v1/sys/health > /dev/null; do \
-# # 		echo "Vault not ready, retrying in 2s..."; \
-# # 		sleep 2; \
-# # 	done
-# 	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' -it $(VAULT_CONTAINER) vault operator init || true
-vault-init:
-	$(COMPOSE) up -d vault
-	@echo "Waiting for Vault to be ready..."
-	@until curl -s http://127.0.0.1:8222/v1/sys/health > /dev/null 2>&1; do \
-		echo "Vault not ready, retrying in 2s..."; \
-		sleep 2; \
-	done
-	@echo "Initializing Vault..."
-	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' $(VAULT_CONTAINER) vault operator init || true
-vault-unseal:
-	@if [ -z "$(KEY)" ]; then exit 1; fi
-	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' -it $(VAULT_CONTAINER) vault operator unseal $(KEY) || true
-
-vault-login:
-	@if [ -z "$(TOKEN)" ]; then exit 1; fi
-	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' -it $(VAULT_CONTAINER) vault login $(TOKEN) || true
-
-vault-put:
-	@if [ -z "$(PATH)" ] || [ -z "$(VALUE)" ]; then exit 1; fi
-	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' -it $(VAULT_CONTAINER) vault kv put $(PATH) value=$(VALUE) || true
-
-vault-get:
-	@if [ -z "$(PATH)" ]; then exit 1; fi
-	docker exec -e VAULT_ADDR='http://127.0.0.1:8222' -it $(VAULT_CONTAINER) vault kv get $(PATH) || true
+up: init-dirs
+	HOST_IP=$(GET_IP) docker-compose up --build -d
 
 clean:
-	$(COMPOSE) down -v --remove-orphans
+	docker-compose down -v --remove-orphans
 	docker system prune -af --volumes
 
 down:
-	$(COMPOSE) down
+	docker-compose down
 
-restart:
-	$(COMPOSE) down
-	$(COMPOSE) up --build -d
+restart: down up
 
 logs:
-	$(COMPOSE) logs -f
+	docker-compose logs -f
 
 .PHONY: re
 re: clean all

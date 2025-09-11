@@ -95,19 +95,81 @@
             50% { transform: scale(1.3) rotate(15deg); }
         }
         
-        /* Elegant glass morphism enhancements */
+        /* Background image classes */
+        .bg-home {
+            background-image: url('imgs/powerpuff-bg.png') !important;
+            background-size: cover !important;
+            background-position: center !important;
+            background-repeat: no-repeat !important;
+            background-attachment: fixed !important;
+        }
+        
+        .bg-friends {
+            background-image: url('imgs/untitled-design.png') !important;
+            background-size: cover !important;
+            background-position: center !important;
+            background-repeat: no-repeat !important;
+            background-attachment: fixed !important;
+        }
+        
+        .bg-profile {
+            background-image: url('imgs/20250905_111657_0000.png') !important;
+            background-size: cover !important;
+            background-position: center !important;
+            background-repeat: no-repeat !important;
+            background-attachment: fixed !important;
+        }
+        
+        .bg-game-options {
+            background-image: url('imgs/bg.md') !important;
+            background-size: cover !important;
+            background-position: center !important;
+            background-repeat: no-repeat !important;
+            background-attachment: fixed !important;
+        }
+
+        /* Elegant glass morphism enhancements - Medium-dark version */
         .glass-card {
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.4);
             border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
         }
         
         .glass-card:hover {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 12px 40px 0 rgba(31, 38, 135, 0.45);
+            box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
+        }
+        
+        /* Medium-dark backgrounds for all containers */
+        .bg-gray-600\/50 {
+            background-color: rgba(0, 0, 0, 0.4) !important;
+        }
+        
+        .bg-gray-700\/60 {
+            background-color: rgba(0, 0, 0, 0.45) !important;
+        }
+        
+        .bg-white\/20 {
+            background-color: rgba(0, 0, 0, 0.3) !important;
+        }
+        
+        /* Light navigation bar background */
+        nav.bg-white\/20 {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+        }
+        
+        /* Dark navigation links styling */
+        nav ul li a {
+            color: rgba(0, 0, 0, 0.8) !important;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5) !important;
+        }
+        
+        nav ul li a:hover {
+            color: rgba(0, 0, 0, 1) !important;
+            text-shadow: 0 2px 4px rgba(255, 255, 255, 0.7) !important;
         }
         
         /* Subtle text shadow for better readability */
@@ -154,11 +216,11 @@
         <div id="status" class="fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 hidden"></div>
         
         <!-- Registration Page -->
-        <div id="registrationPage" class="page active">
+        <div id="registrationPage" class="page active bg-registration-login">
             <div class="container mx-auto px-4 py-8">
                 <div class="text-center mb-8">
-                    <img src="logo.png" alt="Powerpuff Girls Logo" class="mx-auto h-32 mb-4">
-                    <h1 class="text-6xl font-logo text-white mb-4 animate-bounce-slow">Welcome to pong!</h1>
+                    <img src="imgs/logo.png" alt="Powerpuff Girls Logo" class="mx-auto h-32 mb-4">
+                    <h1 class="text-6xl font-logo mb-4 drop-shadow-2xl text-shadow animate-bounce-slow" style="color: #FF69B4 !important;">Welcome to pong!</h1>
                 </div>
 
                 <div class="max-w-md mx-auto bg-gray-600/50 rounded-2xl p-8 border border-white/30 shadow-2xl">
@@ -224,11 +286,11 @@
         </div>
 
         <!-- Login Page -->
-        <div id="loginPage" class="page">
+        <div id="loginPage" class="page bg-registration-login">
             <div class="container mx-auto px-4 py-8">
                 <div class="text-center mb-8">
-                    <img src="logo.png" alt="Powerpuff Girls Logo" class="mx-auto h-32 mb-4">
-                    <h1 class="text-6xl font-logo text-white mb-4 animate-bounce-slow">Ready to play some Pong?</h1>
+                    <img src="imgs/logo.png" alt="Powerpuff Girls Logo" class="mx-auto h-32 mb-4">
+                    <h1 class="text-6xl font-logo mb-4 drop-shadow-2xl text-shadow animate-bounce-slow" style="color: #FF69B4 !important;">Ready to play some Pong?</h1>
                 </div>
 
                 <div class="max-w-md mx-auto bg-gray-600/50 rounded-2xl p-8 border border-white/30 shadow-2xl">
@@ -266,18 +328,19 @@
         </div>
 
         <!-- Main App (After Authentication) -->
-        <div id="mainApp" class="page" style="background-image: url('/avatars/PPG_20th_Still_Xiya_01-1200x675.webp'); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed; min-height: 100vh; position: relative;">
+        <div id="mainApp" class="page bg-home" style="min-height: 100vh; position: relative;">
             <!-- Subtle overlay to improve text readability -->
             <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.2); z-index: 0; pointer-events: none;"></div>
             <!-- Navigation Bar -->
             <nav class="flex items-center justify-between px-8 py-4 bg-gray-600/70 backdrop-blur-sm border-b border-white/30 shadow-lg mb-4" style="position: relative; z-index: 10;">
                 <div class="flex items-center space-x-4">
-                    <img src="logo.png" alt="Powerpuff Girls Logo" class="h-12 w-auto" id="mainLogo">
+                    <img src="imgs/logo.png" alt="Powerpuff Girls Logo" class="h-12 w-auto" id="mainLogo">
                     <span class="text-3xl font-logo text-powerpuff-pink">Powerpuff Pong</span>
                 </div>
                 <ul class="flex space-x-6 text-lg font-bold">
                     <li><a href="#" id="navHome" class="hover:text-powerpuff-pink">Home</a></li>
                     <li><a href="#" id="navFriends" class="hover:text-powerpuff-blue">Friends</a></li>
+                     <li><a href="#" id="navAnalytics" class="hover:text-powerpuff-purple">Dashboard</a></li>
                     <li><a href="#" id="navProfile" class="hover:text-powerpuff-green">Profile</a></li>
                     <li><a href="#" id="navLogout" class="hover:text-powerpuff-red">Logout</a></li>
                 </ul>
@@ -289,7 +352,7 @@
                     <!-- Welcome Message -->
                     <div class="text-center mb-12">
                         <h1 class="text-6xl font-logo text-white mb-4">
-                            Welcome to <span class="text-powerpuff-pink">Powerpuff</span> <span class="text-powerpuff-blue">Pong</span>
+                            <span class="text-powerpuff-blue">Welcome to</span> <span class="text-powerpuff-pink">Powerpuff</span> <span class="text-powerpuff-blue">Pong</span>
                         </h1>
                         <p class="text-xl text-white opacity-90 mb-8">Ready to play the ultimate Pong experience?</p>
                         
@@ -398,10 +461,6 @@
                                 <div class="flex justify-center space-x-4">
                                     <button type="button" id="tournament4Players" class="bg-powerpuff-pink hover:bg-powerpuff-purple text-white font-bold py-3 px-6 rounded-lg transition-colors border-2 border-white/30">
                                         4 Players
-                                    </button>
-                                    <button type="button" id="tournament8Players" class="bg-powerpuff-blue hover:bg-powerpuff-purple text-white font-bold py-3 px-6 rounded-lg transition-colors border-2 border-white/30">
-                                        8 Players
-                                    </button>
                                 </div>
                             </div>
 
@@ -664,6 +723,29 @@
                 </div>
             </div>
 
+            <!-- Dashboard Section -->
+            <div id="dashboardSection" class="section">
+                <div class="container mx-auto px-4 py-8">
+                    <div class="max-w-6xl mx-auto">
+                        <h2 class="text-4xl font-logo text-powerpuff-purple mb-6 text-center">📊 Dashboard</h2>
+                        
+                        <!-- Dashboard content will be loaded here -->
+                        <div class="bg-gray-600/50 rounded-2xl p-6 border border-white/30 shadow-xl">
+                            <div class="text-center text-white">
+                                <div class="text-4xl mb-4">📊</div>
+                                <h3 class="text-2xl font-bold mb-4">Analytics Dashboard</h3>
+                                <p class="text-lg opacity-80">Your gaming statistics and performance metrics</p>
+                                <div class="mt-6">
+                                    <a href="/dashboard.html" class="bg-powerpuff-purple hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                                        View Full Dashboard
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Game Section -->
             <div id="gameSection" class="section">
                 <div class="container mx-auto px-4 py-8">
@@ -834,6 +916,6 @@
         </div>
     </div>
 
-    <script src="./dist/main.js?v=1756785020"></script>
+    <script src="./dist/main.js?v=1756785022"></script>
 </body>
 </html> 
