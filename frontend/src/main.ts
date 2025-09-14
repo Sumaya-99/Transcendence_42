@@ -14,6 +14,7 @@ class SimpleAuth {
     private authToken: string | null = null;
     private remoteGameLeaveHandlersSetup: boolean = false;
     private remoteGameEventHandlers: any = null;
+    private remoteGameAnimationFrameId: number | null = null;
 
     constructor() {
         console.log('SimpleAuth constructor called');
@@ -1432,6 +1433,7 @@ class SimpleAuth {
             navHome.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.showSection('homeSection');
+                this.goHome();
             });
         }
 
@@ -3329,7 +3331,19 @@ class SimpleAuth {
     }
 
     private initializeRemoteGame(): void {
-        console.log('=== INITIALIZING REMOTE GAME ===');
+        if (this.onlineGameState.gameSocket) {
+        this.onlineGameState.gameSocket.onopen = null;
+        this.onlineGameState.gameSocket.onmessage = null;
+        this.onlineGameState.gameSocket.onerror = null;
+        this.onlineGameState.gameSocket.onclose = null;
+        this.onlineGameState.gameSocket.close();
+        this.onlineGameState.gameSocket = null;
+        }
+        const gameOverModal = document.getElementById('gameOverModal');
+        if (gameOverModal) 
+            gameOverModal.classList.add('hidden');
+
+         this.hideRemoteGameMessage();
         
         // Set up the online game canvas and controls for remote game
         const canvas = document.getElementById('onlineGameCanvas') as HTMLCanvasElement;
@@ -3628,12 +3642,17 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
         // Initial draw
         this.drawRemoteGame();
 
+        // Cancel any previous animation frame
+        if (this.remoteGameAnimationFrameId !== null) {
+        cancelAnimationFrame(this.remoteGameAnimationFrameId);
+        this.remoteGameAnimationFrameId = null;
+        }
         // Set up game loop
         const gameLoop = () => {
             this.drawRemoteGame();
-            requestAnimationFrame(gameLoop);
+            this.remoteGameAnimationFrameId = requestAnimationFrame(gameLoop);
         };
-        gameLoop();
+        this.remoteGameAnimationFrameId = requestAnimationFrame(gameLoop);
     }
 
     private drawRemoteGame(): void {
@@ -3704,6 +3723,14 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
     }
 
     private connectToRemoteGame(): void {
+        if (this.onlineGameState.gameSocket) {
+        this.onlineGameState.gameSocket.onopen = null;
+        this.onlineGameState.gameSocket.onmessage = null;
+        this.onlineGameState.gameSocket.onerror = null;
+        this.onlineGameState.gameSocket.onclose = null;
+        this.onlineGameState.gameSocket.close();
+        this.onlineGameState.gameSocket = null;
+    }
         const username = this.currentUser?.username || 'Anonymous';
         // Use nginx proxy for WebSocket connections
         // const protocol = 'ws:';
@@ -3726,6 +3753,11 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
                 this.updateRemoteGameStatus('Connected', 'WebSocket connection established');
             };
             this.onlineGameState.gameSocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.matchId && data.matchId !== this.onlineGameState.matchId) {
+                    // Ignore messages from old games
+                    return;
+                }
                 try {
                     const data = JSON.parse(event.data);
                     console.log('📨 Received remote game message:', data);
@@ -3780,15 +3812,6 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
                     
                     // Show a temporary message
                     this.showRemoteGameMessage(data.message);
-                    
-                    // Hide the message after 3 seconds
-                   if (this.onlineGameState.gameSocket) {
-        setTimeout(() => {
-            this.onlineGameState.gameSocket?.close(1000, 'Game completed normally');
-        }, 1000);
-    }
-                    
-                    // Refresh user data to update dashboard
                     this.refreshUserData();
                     break;
                         case 'success':
@@ -4347,7 +4370,13 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
         
         if (gameOverModal && gameOverIcon && gameOverTitle && gameOverMessage) {
             // Determine if current user won
-            const currentUsername = this.currentUser?.username;
+            if (data.reason === 'left') {
+            gameOverIcon.textContent = '🚪';
+            gameOverTitle.textContent = 'You left the game';
+            gameOverMessage.textContent = 'You have exited the game early.';
+        } 
+            else {
+                const currentUsername = this.currentUser?.username;
             const isWinner = (currentUsername === data.winner) ||
                             (currentUsername === data.player1Username && data.player1Score > data.player2Score) ||
                             (currentUsername === data.player2Username && data.player2Score > data.player1Score);
@@ -4356,7 +4385,7 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
             gameOverIcon.textContent = isWinner ? '🏆' : '💔';
             gameOverTitle.textContent = isWinner ? 'Victory!' : 'Defeat!';
             gameOverMessage.textContent = isWinner ? 'Congratulations, you won!' : `${data.winner} wins!`;
-            
+            }
             // Set player names and scores
             if (gameOverPlayer1Name && gameOverPlayer2Name && gameOverPlayer1Score && gameOverPlayer2Score) {
                 gameOverPlayer1Name.textContent = data.player1Username || 'Player 1';
@@ -4444,6 +4473,50 @@ private handleRemoteGameDisconnection(reason: string, code?: number): void {
             this.onlineGameState.gameSocket.close();
         }
         
+       
+if (
+    this.onlineGameState.gameSocket &&
+    this.onlineGameState.gameSocket.readyState === WebSocket.OPEN &&
+    !this.onlineGameState.gameFinished
+) {
+    try {
+        this.onlineGameState.gameSocket.send(JSON.stringify({
+            type: 'leave',
+            username: this.currentUser?.username,
+            reason: 'user_went_home'
+        }));
+    } catch (e) {
+        console.error('Error sending leave message:', e);
+    }
+
+    // Show a modal to the user that they left the game
+    this.showGameOverScreen({
+        winner: null,
+        winnerScore: '',
+        loserScore: '',
+        player1Username: this.currentUser?.username,
+        player2Username: 'Opponent',
+        player1Score: this.onlineGameState.gameState.player1Score,
+        player2Score: this.onlineGameState.gameState.player2Score,
+        reason: 'left'
+    });
+    
+    // Now close the socket AFTER sending the leave message and showing the modal
+    this.onlineGameState.gameSocket.close();
+}
+if (this.onlineGameState.gameSocket) {
+        this.onlineGameState.gameSocket.onopen = null;
+        this.onlineGameState.gameSocket.onmessage = null;
+        this.onlineGameState.gameSocket.onerror = null;
+        this.onlineGameState.gameSocket.onclose = null;
+        this.onlineGameState.gameSocket.close();
+        this.onlineGameState.gameSocket = null;
+    }
+         if (this.remoteGameAnimationFrameId !== null) {
+            console.log('Cancelling remote game animation frame', this.remoteGameAnimationFrameId);
+            cancelAnimationFrame(this.remoteGameAnimationFrameId);
+            this.remoteGameAnimationFrameId = null;
+        }
         // Reset remote game state
         this.onlineGameState = {
             matchmakingSocket: null,

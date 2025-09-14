@@ -1,9 +1,7 @@
-// Fixed matchStateService.js with immediate game loop stopping
-
 import { 
     createMatch, 
     startMatch, 
-    completeMatch 
+    completeMatch,
 } from './matchDatabaseService.js';
 
 import { PrismaClient } from '@prisma/client';
@@ -82,6 +80,11 @@ export async function addPlayerToMatch(matchId, websocket, username = null)
     if(!match) 
         return null;
     
+    if (match.state.gameFinished) {
+        console.log(`Cannot join match ${matchId}: game already finished`);
+        return null;
+    }
+
     const wasPlayer1 = match.state.player1Username === username;
     const wasPlayer2 = match.state.player2Username === username;
 
@@ -170,10 +173,12 @@ export function removePlayerFromMatch(matchId, websocket) {
         // This logic is mostly correct in your original code.
         // You can keep the setTimeout to delete the match from the map
         // after a short delay.
-        setTimeout(() => {
-            activeMatches.delete(matchId);
-            console.log(`Match ${matchId} deleted from memory after cleanup.`);
-        }, 3000); // 3-second delay
+        activeMatches.delete(matchId);
+        console.log(`Match ${matchId} deleted from memory after cleanup.`);
+    }
+     if (!match.player1 && !match.player2) {
+        activeMatches.delete(matchId);
+        console.log(`Match ${matchId} deleted from memory (both players gone).`);
     }
 
     return disconnectedPlayer;
@@ -526,7 +531,7 @@ export async function findorCreateMatch(websocket, username)
     return { matchId, created: true };
 }
 
-async function updateDashboardStats(player1Username, player2Username, winner)
+export async function updateDashboardStats(player1Username, player2Username, winner)
 {
     if (!winner || !player1Username || !player2Username)
         return;

@@ -3,7 +3,8 @@ import {
     removePlayerFromMatch, 
     getMatch, 
     handlePlayerInput, 
-    updateBall 
+    updateBall,
+    updateDashboardStats
 } from '../services/matchStateService.js';
 
 export async function handleRemoteGame(socket, matchId, username = null)
@@ -57,8 +58,6 @@ export async function handleRemoteGame(socket, matchId, username = null)
             match.player1.send(readyMessage);
         if (match.player2 && match.player2.readyState === 1)
             match.player2.send(readyMessage);
-            
-        // CRITICAL FIX: Clear any existing game loop before starting new one
         if (match.state.gameLoopInterval)
         {
             console.log(`Clearing existing game loop for match ${matchId}`);
@@ -85,6 +84,10 @@ export async function handleRemoteGame(socket, matchId, username = null)
             
             if (data.type === 'input')
                 handlePlayerInputMessage(socket, data, parseInt(matchId), playerNumber);
+            else if (data.type === 'leave') {
+            console.log(`Player ${playerNumber} voluntarily left match ${matchId}: ${data.reason}`);
+            handlePlayerLeave(socket, parseInt(matchId), playerNumber, data.reason || 'voluntarily_left');
+        }
         } catch (error) {
             console.error('Error parsing message from client:', error);
             socket.send(JSON.stringify({
@@ -109,7 +112,18 @@ export async function handleRemoteGame(socket, matchId, username = null)
             console.log(`EMERGENCY STOP: Clearing game loop immediately for match ${matchId}`);
             clearInterval(currentMatch.state.gameLoopInterval);
             currentMatch.state.gameLoopInterval = null;
-            currentMatch.state.gameFinished = true;
+            const remainingPlayer = playerNumber === 1 ? currentMatch.player2 : currentMatch.player1;
+        if (remainingPlayer && remainingPlayer !== socket && remainingPlayer.readyState === 1) {
+            const disconnectMessage = JSON.stringify({
+                type: 'opponent-disconnected',
+                message: `Player ${playerNumber} disconnected unexpectedly`,
+                disconnectedPlayer: playerNumber,
+                reason: 'unexpected_disconnect'
+            });
+            remainingPlayer.send(disconnectMessage);
+            console.log('Sent opponent-disconnected message to remaining player.');
+        }
+            await removePlayerFromMatch(parseInt(matchId), socket);
         }
         
         console.log(`Match state: gameFinished=${currentMatch.state.gameFinished}, connectedPlayers=${currentMatch.state.connectedPlayers}`);
@@ -332,4 +346,80 @@ function startGameCountdown(match, matchId)
             console.log(`Game loop started for match ${matchId} with interval ID:`, match.state.gameLoopInterval);
         }
     }, 1000); // 1 second intervals for countdown
+}
+
+async function handlePlayerLeave(socket, matchId, playerNumber, reason) {
+    const match = getMatch(matchId);
+    if (!match) {
+        console.log(`Match ${matchId} not found for leave handling`);
+        return;
+    }
+
+    // If game is already finished, just clean up
+    if (match.state.gameFinished) {
+        console.log(`Game ${matchId} already finished, just cleaning up player ${playerNumber}`);
+        await removePlayerFromMatch(matchId, socket);
+        return;
+    }
+
+    // Stop the game immediately
+    if (match.state.gameLoopInterval) {
+        clearInterval(match.state.gameLoopInterval);
+        match.state.gameLoopInterval = null;
+    }
+    match.state.gameFinished = true;
+
+    // Determine winner (the player who didn't leave)
+    const remainingPlayerNumber = playerNumber === 1 ? 2 : 1;
+    const leavingPlayerUsername = playerNumber === 1 ? match.state.player1Username : match.state.player2Username;
+    const remainingPlayerUsername = playerNumber === 1 ? match.state.player2Username : match.state.player1Username;
+    
+    // Update database stats
+    try {
+        await updateDashboardStats(
+            match.state.player1Username,
+            match.state.player2Username,
+            remainingPlayerUsername // Winner is the one who stayed
+        );
+    } catch (error) {
+        console.error(`Failed to update dashboard stats: ${error.message}`);
+    }
+
+    // Send game-abandoned message to remaining player
+    const remainingPlayer = playerNumber === 1 ? match.player2 : match.player1;
+    if (remainingPlayer && remainingPlayer.readyState === 1) {
+        const abandonMessage = {
+            type: 'game-abandoned',
+            message: `${leavingPlayerUsername} left the game. You win!`,
+            winner: remainingPlayerNumber,
+            winnerAlias: remainingPlayerUsername,
+            player1Username: match.state.player1Username,
+            player2Username: match.state.player2Username,
+            player1Score: match.state.scorePlayer1,
+            player2Score: match.state.scorePlayer2,
+            reason: 'opponent_left'
+        };
+        remainingPlayer.send(JSON.stringify(abandonMessage));
+        console.log(`Sent win-by-leave message to ${remainingPlayerUsername}`);
+    }
+
+    // Update match in database
+    if (match.matchId) {
+        try {
+            await completeMatch(
+                match.matchId,
+                remainingPlayerUsername,
+                match.state.scorePlayer1,
+                match.state.scorePlayer2
+            );
+        } catch (error) {
+            console.error(`Failed to complete match in DB: ${error.message}`);
+        }
+    }
+
+    // Clean up the player who left
+    await removePlayerFromMatch(matchId, socket);
+    
+    // Close the socket with a specific reason
+    socket.close(1000, 'Player voluntarily left the game');
 }

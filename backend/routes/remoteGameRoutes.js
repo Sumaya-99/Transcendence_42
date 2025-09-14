@@ -116,65 +116,65 @@ async function remoteGameRoutes(fastify, options) {
         }
     });
 
-    // Direct game connection endpoint (kept for backward compatibility)
-    fastify.get('/remote-game/:matchId', { 
-        websocket: true 
-    }, async (connection, request) => {
-        let socket;
-        try {
-            console.log('=== DIRECT REMOTE GAME CONNECTION ===');
-            console.log('Match ID:', request.params.matchId);
-            console.log('Query params:', request.query);
+    // // Direct game connection endpoint (kept for backward compatibility)
+    // fastify.get('/remote-game/:matchId', { 
+    //     websocket: true 
+    // }, async (connection, request) => {
+    //     let socket;
+    //     try {
+    //         console.log('=== DIRECT REMOTE GAME CONNECTION ===');
+    //         console.log('Match ID:', request.params.matchId);
+    //         console.log('Query params:', request.query);
             
-            socket = connection.socket || connection;
+    //         socket = connection.socket || connection;
             
-            if (!socket) {
-                throw new Error('No WebSocket connection available');
-            }
+    //         if (!socket) {
+    //             throw new Error('No WebSocket connection available');
+    //         }
             
-            const matchId = request.params.matchId;
-            const username = extractUsername(request);
+    //         const matchId = request.params.matchId;
+    //         const username = extractUsername(request);
             
-            // Validate matchId
-            if (!matchId || isNaN(parseInt(matchId))) {
-                throw new Error(`Invalid match ID: ${matchId}`);
-            }
+    //         // Validate matchId
+    //         if (!matchId || isNaN(parseInt(matchId))) {
+    //             throw new Error(`Invalid match ID: ${matchId}`);
+    //         }
             
-            // Track user activity if authenticated
-            if (username !== 'Anonymous') {
-                try {
-                    await trackUserActivity(username);
-                } catch (error) {
-                    console.log('Failed to track user activity:', error.message);
-                }
-            }
+    //         // Track user activity if authenticated
+    //         if (username !== 'Anonymous') {
+    //             try {
+    //                 await trackUserActivity(username);
+    //             } catch (error) {
+    //                 console.log('Failed to track user activity:', error.message);
+    //             }
+    //         }
             
-            await handleRemoteGame(socket, matchId, username);
+    //         await handleRemoteGame(socket, matchId, username);
             
-        } catch (error) {
-            console.error('Direct remote game connection error:', error);
-            console.error('Error stack:', error.stack);
+    //     } catch (error) {
+    //         console.error('Direct remote game connection error:', error);
+    //         console.error('Error stack:', error.stack);
             
-            if (socket && socket.readyState === 1) {
-                socket.send(JSON.stringify({
-                    type: 'error',
-                    message: error.message
-                }));
-                socket.close(1002, error.message);
-            }
-        }
-    });
+    //         if (socket && socket.readyState === 1) {
+    //             socket.send(JSON.stringify({
+    //                 type: 'error',
+    //                 message: error.message
+    //             }));
+    //             socket.close(1002, error.message);
+    //         }
+    //     }
+    // });
 
-    // Debug endpoint to check active matches (remove in production)
-    fastify.get('/debug/matches', async (request, reply) => {
-        const { activeMatches, waitingPlayers } = await import('../services/matchStateService.js');
+    // // Debug endpoint to check active matches (remove in production)
+    // fastify.get('/debug/matches', async (request, reply) => {
+    //     const { activeMatches, waitingPlayers } = await import('../services/matchStateService.js');
         
-        return {
-            activeMatches: Array.from(activeMatches.keys()),
-            waitingPlayers: Array.from(waitingPlayers.keys()),
-            timestamp: new Date().toISOString()
-        };
-    });
+    //     return {
+    //         activeMatches: Array.from(activeMatches.keys()),
+    //         waitingPlayers: Array.from(waitingPlayers.keys()),
+    //         timestamp: new Date().toISOString()
+    //     };
+    // });
 }
 
 export default remoteGameRoutes;
