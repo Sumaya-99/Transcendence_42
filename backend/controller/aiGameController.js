@@ -24,16 +24,22 @@ export async function handleAIGame(socket, request) {
         ballSpeedX: GAME_CONFIG.BALL.SPEED_X,
         ballSpeedY: GAME_CONFIG.BALL.SPEED_Y,
         ballRadius: GAME_CONFIG.BALL.RADIUS,
+        playerPaddleX: 50, // Left paddle X position
         playerPaddleY: paddlePositions.player,
+        aiPaddleX: 735, // Right paddle X position
         aiPaddleY: paddlePositions.ai,
+        paddleWidth: GAME_CONFIG.PADDLE.WIDTH,
+        paddleHeight: GAME_CONFIG.PADDLE.HEIGHT,
         playerScore: 0,
         aiScore: 0,
         gameStarted: false,
         gameOver: false,
         winningScore: GAME_CONFIG.GAME.WINNING_SCORE,
         currentDifficulty: currentDifficulty,
-        aiConfig: aiConfig
+        aiConfig: aiConfig,
     };
+
+    let gameStartTime = null;
 
     let gameLoop = null;
     let aiMoveInterval = null;
@@ -102,29 +108,52 @@ export async function handleAIGame(socket, request) {
             gameState.ballSpeedY = -gameState.ballSpeedY;
         }
 
-        // Paddle collisions using helper functions
-        // Player paddle (left)
-        const playerPaddleBounds = getPaddleBounds(gameState.playerPaddleY, true);
+        // Reduce tunneling: use previous position and crossing checks against paddle planes
+        const prevX = gameState.ballX - gameState.ballSpeedX;
+        const prevY = gameState.ballY - gameState.ballSpeedY;
+
+        // Left paddle (player) - ball moving left and crossing paddle plane
+        const leftPaddleRightEdge = gameState.playerPaddleX + gameState.paddleWidth;
+        const ballLeftEdge = gameState.ballX - gameState.ballRadius;
         
-        if (gameState.ballX <= playerPaddleBounds.right && 
-            gameState.ballY >= playerPaddleBounds.top && 
-            gameState.ballY <= playerPaddleBounds.bottom) {
-            gameState.ballSpeedX = -gameState.ballSpeedX;
-            // Add some angle based on where ball hits paddle
-            const offset = (gameState.ballY - playerPaddleBounds.center) / (GAME_CONFIG.PADDLE.HEIGHT / 2);
-            gameState.ballSpeedY = GAME_CONFIG.BALL.SPEED_X * offset;
+        if (gameState.ballSpeedX < 0 && 
+            prevX > leftPaddleRightEdge && ballLeftEdge <= leftPaddleRightEdge &&
+            gameState.ballY >= gameState.playerPaddleY &&
+            gameState.ballY <= gameState.playerPaddleY + gameState.paddleHeight) {
+            
+            // Clamp ball to paddle surface to prevent tunneling
+            gameState.ballX = leftPaddleRightEdge + gameState.ballRadius;
+            gameState.ballSpeedX = Math.abs(gameState.ballSpeedX);
+            
+            // Additional safety: ensure ball is not behind paddle
+            if (gameState.ballX < leftPaddleRightEdge) {
+                gameState.ballX = leftPaddleRightEdge + gameState.ballRadius + 1;
+            }
+            
+            const spin = (Math.random() - 0.5) * 2;
+            gameState.ballSpeedY = Math.max(-8, Math.min(8, gameState.ballSpeedY + spin));
         }
 
-        // AI paddle (right)
-        const aiPaddleBounds = getPaddleBounds(gameState.aiPaddleY, false);
+        // Right paddle (AI) - ball moving right and crossing paddle plane
+        const rightPaddleLeftEdge = gameState.aiPaddleX;
+        const ballRightEdge = gameState.ballX + gameState.ballRadius;
         
-        if (gameState.ballX >= aiPaddleBounds.left && 
-            gameState.ballY >= aiPaddleBounds.top && 
-            gameState.ballY <= aiPaddleBounds.bottom) {
-            gameState.ballSpeedX = -gameState.ballSpeedX;
-            // Add some angle based on where ball hits paddle
-            const offset = (gameState.ballY - aiPaddleBounds.center) / (GAME_CONFIG.PADDLE.HEIGHT / 2);
-            gameState.ballSpeedY = GAME_CONFIG.BALL.SPEED_X * offset;
+        if (gameState.ballSpeedX > 0 && 
+            prevX < rightPaddleLeftEdge && ballRightEdge >= rightPaddleLeftEdge &&
+            gameState.ballY >= gameState.aiPaddleY &&
+            gameState.ballY <= gameState.aiPaddleY + gameState.paddleHeight) {
+            
+            // Clamp ball to paddle surface to prevent tunneling
+            gameState.ballX = rightPaddleLeftEdge - gameState.ballRadius;
+            gameState.ballSpeedX = -Math.abs(gameState.ballSpeedX);
+            
+            // Additional safety: ensure ball is not behind paddle
+            if (gameState.ballX > rightPaddleLeftEdge) {
+                gameState.ballX = rightPaddleLeftEdge - gameState.ballRadius - 1;
+            }
+            
+            const spin = (Math.random() - 0.5) * 2;
+            gameState.ballSpeedY = Math.max(-8, Math.min(8, gameState.ballSpeedY + spin));
         }
 
         // Scoring
@@ -140,13 +169,8 @@ export async function handleAIGame(socket, request) {
         if (gameState.playerScore >= gameState.winningScore || gameState.aiScore >= gameState.winningScore) {
             gameState.gameOver = true;
             
-            // Save game result to database
-            try {
-                await saveAIGameResult(null, gameState.playerScore, gameState.aiScore, 'AI_PONG');
-                console.log('AI game result saved to database');
-            } catch (error) {
-                console.error('Failed to save AI game result:', error);
-            }
+            // Game result will be saved by the frontend through the authenticated endpoint
+            console.log('AI game finished - result will be saved by frontend');
             
             socket.send(JSON.stringify({
                 type: 'game-over',
@@ -159,6 +183,7 @@ export async function handleAIGame(socket, request) {
             return;
         }
 
+
         // Send updated game state
         socket.send(JSON.stringify({
             type: 'game-update',
@@ -169,6 +194,7 @@ export async function handleAIGame(socket, request) {
             }
         }));
     }
+
 
     // Reset ball to center
     function resetBall(direction = 1) {
@@ -187,6 +213,7 @@ export async function handleAIGame(socket, request) {
         gameState.gameOver = false;
         gameState.playerScore = 0;
         gameState.aiScore = 0;
+        gameStartTime = new Date(); // Record actual game start time
         resetBall();
         
         // Start game loop
@@ -312,6 +339,7 @@ export async function handleAIGame(socket, request) {
                     startGame();
                     break;
                     
+                    
                 default:
                     console.log('Unknown message type:', data.type);
             }
@@ -342,15 +370,29 @@ export async function handleAIGame(socket, request) {
 }
 
 // Save AI game result to database
-export async function saveAIGameResult(userId, playerScore, aiScore, gameType) {
+export async function saveAIGameResult(userId, playerScore, aiScore, gameType, gameStartTime = null) {
     try {
+        // Get user info to get the actual username
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { username: true }
+        });
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        const now = new Date();
+        const startTime = gameStartTime || new Date(now.getTime() - 60000); // Default to 1 minute ago if no start time
+
         const result = await prisma.match.create({
             data: {
-                player1Alias: 'Player',
+                player1Alias: user.username,
                 player2Alias: 'AI',
-                winnerAlias: playerScore > aiScore ? 'Player' : 'AI',
+                winnerAlias: playerScore > aiScore ? user.username : 'AI',
                 status: 'FINISHED',
-                finishedAt: new Date(),
+                startedAt: startTime,
+                finishedAt: now,
                 roundNumber: 1,  // AI games are always round 1
                 matchNumber: 1   // AI games are always match 1
             }
@@ -361,7 +403,7 @@ export async function saveAIGameResult(userId, playerScore, aiScore, gameType) {
             data: [
                 {
                     matchId: result.id,
-                    alias: 'Player',
+                    alias: user.username,
                     score: playerScore,
                     result: playerScore > aiScore ? 'WIN' : 'LOSS'
                 },

@@ -43,22 +43,34 @@ export async function getFriends(req, reply) {
 }
 
 
-export async function sendRequest(req, reply) {
-	const id = req.user.id
-	const userId = req.body.userId
-
-	if (id === userId)
-		throw new ValidationError("Cannot be friends with self")
-	
-	await prisma.friendship.create({data: {
-
-		requesterId: id,
-		addresseeId: userId
-	}})
-
-	// if request is pending then it should not allow it to send from the frontend
-	reply.status(201).send({message: "request sent successfully"})
-
+export async function sendRequest(req, reply)
+{
+    const id = req.user.id
+    const userId = req.body.userId
+    
+    if (id === userId)
+        throw new ValidationError("Cannot be friends with self")
+    
+    const friendship = await prisma.friendship.findFirst({
+        where: {
+        OR: [
+            { requesterId: id, addresseeId: userId },
+            { requesterId: userId, addresseeId: id }
+        ]
+        }
+    });
+    
+    if (friendship)
+        throw new ValidationError("You cannot send another Request")
+    
+    await prisma.friendship.create({data: {
+    
+        requesterId: id,
+        addresseeId: userId
+    }})
+    
+    // if request is pending then it should not allow it to send from the frontend
+    reply.status(201).send({message: "request sent successfully"})
 }
 
 // 200 accepted, 404 if not pending
@@ -135,21 +147,59 @@ export async function blockFriend(req, reply) {
 }
 
 export async function searchUser(req, reply) {
-	const {q: searchTerm, page = 1} = req.query
-	const pageNum = parseInt(page, 10) || 1
-	const limit = 10
-	const skip = (pageNum - 1) * limit
+    const { q: searchTerm, page = 1 } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
+    const limit = 10;
+    const skip = (pageNum - 1) * limit;
+    const currentUserId = req.user.id;
 
-	const users = await prisma.user.findMany({
-		where: {
-			OR: [
-					{email: { startsWith: searchTerm}},
-					{username: {startsWith: searchTerm}}
-			],
-		},
-		select: sanitizedUserSelect,
-		take: limit,
-		skip: skip
-	})
-	reply.status(200).send({users: users})
+    const users = await prisma.user.findMany({
+        where: {
+            AND: [
+                {
+                    OR: [
+                        { email: { startsWith: searchTerm } },
+                        { username: { startsWith: searchTerm } }
+                    ]
+                },
+                { id: { not: currentUserId } }
+            ]
+        },
+        select: {
+            ...sanitizedUserSelect,
+            // Check if current user sent a request to this user
+            requestsReceived: {
+                where: { requesterId: currentUserId }
+            },
+            // Check if this user sent a request to current user  
+            requestsRequested: {
+                where: { addresseeId: currentUserId }
+            }
+        },
+        take: limit,
+        skip: skip
+    });
+
+    // Clean up the response
+    const result = users.map(user => {
+        const sentByCurrentUser = user.requestsReceived[0]; // Current user → this user
+        const receivedFromThisUser = user.requestsRequested[0]; // This user → current user
+        const friendship = sentByCurrentUser || receivedFromThisUser;
+
+        return {
+            ...user,
+            friendship: friendship ? {
+                requesterId: friendship.requesterId,
+                addresseeId: friendship.addresseeId,
+                status: friendship.status,
+                isRequester: friendship.requesterId === currentUserId,
+                createdAt: friendship.createdAt
+            } : null,
+            // Remove the relation arrays from response
+            requestsReceived: undefined,
+            requestsRequested: undefined
+        };
+    });
+
+    reply.status(200).send({ users: result });
 }

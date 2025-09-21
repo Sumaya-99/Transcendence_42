@@ -2,6 +2,7 @@ import {
     createMatch, 
     startMatch, 
     completeMatch,
+    updatePlayer2
 } from './matchDatabaseService.js';
 
 import { PrismaClient } from '@prisma/client';
@@ -11,11 +12,10 @@ const prisma = new PrismaClient();
 const activeMatches = new Map();
 const waitingPlayers = new Map(); 
 
-// Add a counter for sequential match IDs to avoid collisions
 let matchIdCounter = 1;
 const generateMatchId = () => matchIdCounter++;
 
-export async function createMatchState(matchId, player1Username = 'Player1', player2Username = 'Player2')
+export async function createMatchState(matchId, player1Username = 'Player1', player2Username = 'Waiting for Player 2')
 {
     const numericMatchId = parseInt(matchId);
     
@@ -64,6 +64,13 @@ export async function createMatchState(matchId, player1Username = 'Player1', pla
                 player1Username,
                 player2Username,
                 readyState: false,
+                powerUps: [],
+                powerUpSpawnTimer: 0,
+                powerUpsSpawned: 0,
+                maxPowerUpsPerGame: 2,
+                powerupsEnabled: false,
+                player1PowerupsPreference: null,
+                player2PowerupsPreference: null
             }
         };
         
@@ -73,6 +80,72 @@ export async function createMatchState(matchId, player1Username = 'Player1', pla
     return activeMatches.get(numericMatchId);
 }
 
+export function updatePlayerPowerupsPreference(matchId, playerNumber, enabled)
+{
+    const match = getMatch(matchId);
+    if (!match)
+        return null;
+
+    if (playerNumber === 1)
+        match.state.player1PowerupsPreference = enabled;
+    else if (playerNumber === 2)
+        match.state.player2PowerupsPreference = enabled;
+
+    // Update overall powerups setting - only enable if BOTH players want it
+    if (match.state.player1PowerupsPreference !== null && match.state.player2PowerupsPreference !== null)
+        match.state.powerupsEnabled = match.state.player1PowerupsPreference && match.state.player2PowerupsPreference;
+
+    return {
+        player1Preference: match.state.player1PowerupsPreference,
+        player2Preference: match.state.player2PowerupsPreference,
+        finalSetting: match.state.powerupsEnabled
+    };
+}
+
+function updatePowerUps(match) {
+    if (!match.state.powerupsEnabled) return;
+    
+    // Spawn power-ups (max 2 per game total)
+    if (match.state.powerUpsSpawned < match.state.maxPowerUpsPerGame && match.state.powerUps.length === 0 && Math.random() < 0.1)
+    {
+        const powerUp = {
+            x: Math.random() * (match.state.canvasWidth - 30),
+            y: Math.random() * (match.state.canvasHeight - 30),
+            width: 25,
+            height: 25,
+            type: 'point',
+            active: true,
+            duration: 600 // 10 seconds at 60fps
+        };
+        
+        match.state.powerUps.push(powerUp);
+        match.state.powerUpsSpawned++;
+    }
+    
+    // Update existing power-ups (decrease duration)
+    match.state.powerUps = match.state.powerUps.filter(powerUp => {
+        powerUp.duration--;
+        return powerUp.duration > 0;
+    });
+    
+    // Check ball collision with power-ups
+    match.state.powerUps.forEach((powerUp, index) => {
+        const ballX = match.state.ballPositionX;
+        const ballY = match.state.ballPositionY;
+        const ballRadius = match.state.radius;
+        
+        if (ballX + ballRadius > powerUp.x && ballX - ballRadius < powerUp.x + powerUp.width && ballY + ballRadius > powerUp.y &&
+            ballY - ballRadius < powerUp.y + powerUp.height)
+        {
+            if (match.state.speedX > 0)
+                match.state.scorePlayer1++;
+            else
+                match.state.scorePlayer2++;
+            match.state.powerUps.splice(index, 1);
+        }
+    });
+}
+
 export async function addPlayerToMatch(matchId, websocket, username = null)
 {
     const match = await createMatchState(matchId);
@@ -80,33 +153,8 @@ export async function addPlayerToMatch(matchId, websocket, username = null)
     if(!match) 
         return null;
     
-    if (match.state.gameFinished) {
-        console.log(`Cannot join match ${matchId}: game already finished`);
+    if (match.state.gameFinished)
         return null;
-    }
-
-    const wasPlayer1 = match.state.player1Username === username;
-    const wasPlayer2 = match.state.player2Username === username;
-
-    if (wasPlayer1) {
-        console.log(`Reconnecting ${username} as player 1`);
-        match.player1 = websocket;
-        if (match.state.connectedPlayers === 0) {
-            match.state.connectedPlayers = 1;
-        }
-        return 1;
-    }
-    
-    if (wasPlayer2) {
-        console.log(`Reconnecting ${username} as player 2`);
-        match.player2 = websocket;
-        if (match.state.connectedPlayers === 1) {
-            match.state.connectedPlayers = 2;
-        } else {
-            match.state.connectedPlayers = 1;
-        }
-        return 2;
-    }
 
     if(!match.player1)
     {
@@ -128,59 +176,74 @@ export async function addPlayerToMatch(matchId, websocket, username = null)
     return (null);
 }
 
-export function removePlayerFromMatch(matchId, websocket) {
+export async function removePlayerFromMatch(matchId, websocket)
+{
     const match = activeMatches.get(matchId);
     if (!match) return null;
 
     let disconnectedPlayer = null;
-    if (match.player1 === websocket) {
+    let remainingPlayerUsername = null;
+
+    if (match.player1 === websocket)
+    {
         match.player1 = null;
         match.state.connectedPlayers--;
         disconnectedPlayer = 1;
-    } else if (match.player2 === websocket) {
+        remainingPlayerUsername = match.state.player2Username;
+    }
+    else if (match.player2 === websocket)
+    {
         match.player2 = null;
         match.state.connectedPlayers--;
         disconnectedPlayer = 2;
+        remainingPlayerUsername = match.state.player1Username;
     }
 
-    // Only handle active game disconnects
-    if (disconnectedPlayer && !match.state.gameFinished) {
-        console.log(`🛑 Player ${disconnectedPlayer} disconnected. Handling cleanup.`);
-
-        // CRITICAL: Stop the game loop immediately and mark as finished
-        if (match.state.gameLoopInterval) {
+    if (disconnectedPlayer && !match.state.gameFinished)
+    {
+        if (match.state.gameLoopInterval)
+        {
             clearInterval(match.state.gameLoopInterval);
             match.state.gameLoopInterval = null;
         }
         match.state.gameFinished = true;
 
-        // Notify the remaining player
         const remainingPlayer = disconnectedPlayer === 1 ? match.player2 : match.player1;
-        const remainingPlayerUsername = disconnectedPlayer === 1 ? match.state.player2Username : match.state.player1Username;
 
-        if (remainingPlayer && remainingPlayer.readyState === 1) {
+        if (remainingPlayer && remainingPlayer.readyState === 1)
+        {
+            console.log('🔍 Processing disconnection:');
             const abandonMessage = {
                 type: 'game-abandoned',
                 message: `Opponent disconnected. You win!`,
                 winner: disconnectedPlayer === 1 ? 2 : 1,
+                player1Score: match.state.scorePlayer1,
+                player2Score: match.state.scorePlayer2,
+                player1Username: match.state.player1Username,
+                player2Username: match.state.player2Username,
                 winnerAlias: remainingPlayerUsername
             };
             remainingPlayer.send(JSON.stringify(abandonMessage));
-            console.log('Sent win-by-disconnect message to remaining player.');
         }
-
-        // Update database and clean up
-        // This logic is mostly correct in your original code.
-        // You can keep the setTimeout to delete the match from the map
-        // after a short delay.
+        await updateDashboardStats(
+            match.state.player1Username, 
+            match.state.player2Username,
+            remainingPlayerUsername
+        );
+        if (match.matchId)
+        {
+            await completeMatch(
+                match.matchId, 
+                remainingPlayerUsername,
+                disconnectedPlayer === 1 ? match.state.scorePlayer2 : match.state.scorePlayer1,
+                disconnectedPlayer === 1 ? match.state.scorePlayer1 : match.state.scorePlayer2
+            );
+        }
+        broadcastGameOver(match, disconnectedPlayer === 1 ? 2 : 1, matchId);
         activeMatches.delete(matchId);
-        console.log(`Match ${matchId} deleted from memory after cleanup.`);
     }
-     if (!match.player1 && !match.player2) {
+    if (!match.player1 && !match.player2)
         activeMatches.delete(matchId);
-        console.log(`Match ${matchId} deleted from memory (both players gone).`);
-    }
-
     return disconnectedPlayer;
 }
 
@@ -197,11 +260,8 @@ export function handlePlayerInput(matchId, playerNumber, inputType, inputState)
     if(!match)
         return (null);
 
-    // SAFETY CHECK: Don't process input if game is finished
-    if (match.state.gameFinished) {
-        console.log(`Ignoring input for finished game ${matchId}`);
-        return null;
-    }
+    if (match.state.gameFinished) 
+        return null; 
 
     const playerKey = playerNumber === 1 ? 'player1Keys' : 'player2Keys';
     
@@ -260,19 +320,49 @@ function updatePaddlePosition(match)
 }
 
 function checkCollisions(match) {
-    // Left paddle
-    if (match.state.ballPositionX - match.state.radius <= match.state.leftPaddleX + match.state.paddleWidth &&
-       match.state.ballPositionY >= match.state.leftPaddleY &&
-       match.state.ballPositionY <= match.state.leftPaddleY + match.state.paddleHeight) {
+    // Compute previous position for continuous collision detection
+    const previousX = match.state.ballPositionX - match.state.speedX;
+    const previousY = match.state.ballPositionY - match.state.speedY;
+
+    // Left paddle collision - ball moving left and crossing paddle plane
+    const leftPaddleRightEdge = match.state.leftPaddleX + match.state.paddleWidth;
+    const ballLeftEdge = match.state.ballPositionX - match.state.radius;
+    
+    if (match.state.speedX < 0 && 
+        previousX > leftPaddleRightEdge && ballLeftEdge <= leftPaddleRightEdge &&
+        match.state.ballPositionY >= match.state.leftPaddleY &&
+        match.state.ballPositionY <= match.state.leftPaddleY + match.state.paddleHeight) {
+        
+        // Clamp ball to paddle surface to prevent tunneling
+        match.state.ballPositionX = leftPaddleRightEdge + match.state.radius;
         match.state.speedX = Math.abs(match.state.speedX);
+        
+        // Additional safety: ensure ball is not behind paddle
+        if (match.state.ballPositionX < leftPaddleRightEdge) {
+            match.state.ballPositionX = leftPaddleRightEdge + match.state.radius + 1;
+        }
+        
         addSpin(match);
     }
 
-    // Right paddle
-    if (match.state.ballPositionX + match.state.radius >= match.state.rightPaddleX &&
-       match.state.ballPositionY >=match.state.rightPaddleY &&
-       match.state.ballPositionY <=match.state.rightPaddleY + match.state.paddleHeight) {
+    // Right paddle collision - ball moving right and crossing paddle plane
+    const rightPaddleLeftEdge = match.state.rightPaddleX;
+    const ballRightEdge = match.state.ballPositionX + match.state.radius;
+    
+    if (match.state.speedX > 0 && 
+        previousX < rightPaddleLeftEdge && ballRightEdge >= rightPaddleLeftEdge &&
+        match.state.ballPositionY >= match.state.rightPaddleY &&
+        match.state.ballPositionY <= match.state.rightPaddleY + match.state.paddleHeight) {
+        
+        // Clamp ball to paddle surface to prevent tunneling
+        match.state.ballPositionX = rightPaddleLeftEdge - match.state.radius;
         match.state.speedX = -Math.abs(match.state.speedX);
+        
+        // Additional safety: ensure ball is not behind paddle
+        if (match.state.ballPositionX > rightPaddleLeftEdge) {
+            match.state.ballPositionX = rightPaddleLeftEdge - match.state.radius - 1;
+        }
+        
         addSpin(match);
     }
 }
@@ -297,27 +387,26 @@ export async function updateBall(matchId)
     if(!match)
         return (null);
 
-    // CRITICAL SAFETY CHECK: Don't update if game is finished or if no game loop interval
-    if (match.state.gameFinished) {
-        console.log(`🛑 Game ${matchId} is finished, stopping ball updates`);
-        if (match.state.gameLoopInterval) {
+    if (match.state.gameFinished)
+    {
+        if (match.state.gameLoopInterval)
+        {
             clearInterval(match.state.gameLoopInterval);
             match.state.gameLoopInterval = null;
         }
         return null;
     }
-
-    // Check if both players are still connected
-    if (match.state.connectedPlayers < 2) {
-        console.log(`🛑 Not enough players in match ${matchId} (${match.state.connectedPlayers}/2), stopping game`);
-        if (match.state.gameLoopInterval) {
+    if (match.state.connectedPlayers < 2)
+    {
+        if (match.state.gameLoopInterval)
+        {
             clearInterval(match.state.gameLoopInterval);
             match.state.gameLoopInterval = null;
         }
         match.state.gameFinished = true;
         return null;
     }
-
+    updatePowerUps(match);
     if (!match.state.matchStarted && match.state.connectedPlayers === 2)
     {
         match.state.matchStarted = true;
@@ -342,7 +431,6 @@ export async function updateBall(matchId)
         match.state.scorePlayer2++;
         if(match.state.scorePlayer2 >= match.state.maxScore)
         {
-            console.log(`🏆 Player 2 wins match ${matchId}! Stopping game immediately.`);
             if (match.state.gameLoopInterval)
             {
                 clearInterval(match.state.gameLoopInterval);
@@ -365,7 +453,6 @@ export async function updateBall(matchId)
         match.state.scorePlayer1++; 
         if(match.state.scorePlayer1 >= match.state.maxScore)
         {
-            console.log(`🏆 Player 1 wins match ${matchId}! Stopping game immediately.`);
             if (match.state.gameLoopInterval)
             {
                 clearInterval(match.state.gameLoopInterval);
@@ -384,16 +471,15 @@ export async function updateBall(matchId)
         broadcastGameState(match);
     }
     checkCollisions(match);
+    
+    
     broadcastGameState(match);
 }
 
 function broadcastGameState(match)
 {
-    // SAFETY CHECK: Don't broadcast if game is finished
-    if (match.state.gameFinished) {
-        console.log(`Game finished, not broadcasting game state`);
+    if (match.state.gameFinished)
         return;
-    }
 
     const gameUpdate = JSON.stringify({
         type: 'game-state',
@@ -406,13 +492,15 @@ function broadcastGameState(match)
         player1Score: match.state.scorePlayer1,
         player2Score: match.state.scorePlayer2,
         player1Username: match.state.player1Username,
-        player2Username: match.state.player2Username
+        player2Username: match.state.player2Username,
+        powerUps: match.state.powerUps
     });
     if(match.player1 && match.player1.readyState === 1)
         match.player1.send(gameUpdate);
     if(match.player2 && match.player2.readyState === 1)
         match.player2.send(gameUpdate);
 }
+
 
 async function broadcastGameOver(match, winner, matchId)
 {
@@ -426,8 +514,6 @@ async function broadcastGameOver(match, winner, matchId)
         player1Username: match.state.player1Username,
         player2Username: match.state.player2Username
     });
-
-    console.log(`Broadcasting game over for match ${matchId}: ${winnerUsername} wins`);
 
     // Send to player 1
     if(match.player1 && match.player1.readyState === 1)
@@ -446,88 +532,59 @@ async function broadcastGameOver(match, winner, matchId)
             match.state.scorePlayer2
         );
     }
-    
-    // Clean up game loop - ENSURE it's stopped
+
     if (match.state.gameLoopInterval)
     {
         clearInterval(match.state.gameLoopInterval);
         match.state.gameLoopInterval = null;
-        console.log(`🛑 Game loop stopped for match ${matchId} after game over`);
     }
     
     // Mark as finished
     match.state.gameFinished = true;
-    
-    console.log(`Game over broadcast complete for match ${matchId}`);
+    activeMatches.delete(matchId);
 }
 
-// Fixed findOrCreateMatch to prevent reconnection to finished games
-export async function findorCreateMatch(websocket, username)
+export async function findorCreateMatch(websocket, username, powerupsEnabled = true)
 {
-    console.log('FindOrCreateMatch called for:', username);
-    console.log('Current waiting players:', Array.from(waitingPlayers.keys()));
-    console.log('Current active matches:', Array.from(activeMatches.keys()));
-    
-    // First, check if user is already in an existing match (reconnection scenario)
-    for (const [matchId, match] of activeMatches) {
+    for (const [matchId, match] of activeMatches)
+    {
         const isPlayer1 = match.state.player1Username === username;
         const isPlayer2 = match.state.player2Username === username;
         
-        if (isPlayer1 || isPlayer2) {
-            console.log(`User ${username} found in existing match ${matchId}`);
-            console.log(`Game finished: ${match.state.gameFinished}`);
-            
-            // Don't allow reconnection to finished games
-            if (match.state.gameFinished) {
-                console.log(`Match ${matchId} is finished, not allowing reconnection`);
-                continue; // Look for other matches or create new one
-            }
-            
+        if (isPlayer1 || isPlayer2)
+        {
+            if (match.state.gameFinished)
+                continue;
             const existingSocket = isPlayer1 ? match.player1 : match.player2;
             
-            if (existingSocket && existingSocket.readyState === 1 && existingSocket !== websocket) {
-                // They have an active connection from elsewhere - reject this one
-                console.log(`User ${username} already has active connection in match ${matchId}`);
+            if (existingSocket && existingSocket.readyState === 1 && existingSocket !== websocket)
                 throw new Error('You are already in this match!');
-            } else {
-                // Their previous connection is dead or this is a reconnection - allow it
-                console.log(`Allowing reconnection for ${username} to match ${matchId}`);
+            else
+            {
+                const playerNumber = isPlayer1 ? 1 : 2;
+                updatePlayerPowerupsPreference(matchId, playerNumber, powerupsEnabled);
                 return { matchId, created: false, reconnected: true };
             }
         }
     }
-
-    // Look for an available match that has exactly 1 player and isn't created by the same user
     for(const [waitingMatchId, waitingData] of waitingPlayers)
     {
         const match = getMatch(waitingMatchId);
-        if(match && match.state.connectedPlayers === 1 && !match.state.gameFinished) {
-            // Make sure this isn't the same user trying to join their own match
-            if (match.state.player1Username === username || match.state.player2Username === username) {
-                console.log(`User ${username} trying to join their own match ${waitingMatchId}, skipping...`);
+        if(match && match.state.connectedPlayers === 1 && !match.state.gameFinished)
+        {
+            if (match.state.player1Username === username || match.state.player2Username === username)
                 continue;
-            }
-            
-            console.log(`Found available match ${waitingMatchId} for ${username}`);
-            console.log(`Match has ${match.state.connectedPlayers} players`);
-            console.log(`Player1: ${match.state.player1Username}, Player2: ${match.state.player2Username}`);
-            
-            // Remove from waiting list since this match will be full
+            match.state.player2Username = username;
+            await updatePlayer2(match.matchId, username);
+            updatePlayerPowerupsPreference(waitingMatchId, 2, powerupsEnabled);
             waitingPlayers.delete(waitingMatchId);
             return { matchId: waitingMatchId, created: false };
         }
     }
-
-    // No suitable match found, create a new one with sequential ID
     const matchId = generateMatchId();
-    console.log(`Creating new match ${matchId} for ${username}`);
-
-    await createMatchState(matchId, username, 'Player2'); // Start with username as player1
+    await createMatchState(matchId, username, 'Player2');
+    updatePlayerPowerupsPreference(matchId, 1, powerupsEnabled);
     waitingPlayers.set(matchId, { username, timestamp: Date.now() });
-    
-    console.log(`New match ${matchId} created and added to waiting list`);
-    console.log('Updated waiting players:', Array.from(waitingPlayers.keys()));
-    
     return { matchId, created: true };
 }
 
@@ -536,11 +593,11 @@ export async function updateDashboardStats(player1Username, player2Username, win
     if (!winner || !player1Username || !player2Username)
         return;
     
-    //update Winner stats
     const winnerUser = await prisma.user.findUnique({
         where: { username: winner }
     });
-    if (winnerUser){
+    if (winnerUser)
+    {
         await prisma.user.update({
             where: { username: winner },
             data: {
@@ -548,14 +605,15 @@ export async function updateDashboardStats(player1Username, player2Username, win
                 wins: winnerUser.wins + 1,
             }
         });
-        console.log("Update winner successfully");
     }
 
+    // Update loser stats
     const loser = winner === player1Username ? player2Username : player1Username;
     const loserUser = await prisma.user.findUnique({
         where: { username: loser }
     });
-    if (loserUser) {
+    if (loserUser)
+    {
         await prisma.user.update({
             where: { username: loser },
             data: {
@@ -563,6 +621,5 @@ export async function updateDashboardStats(player1Username, player2Username, win
                 losses: loserUser.losses + 1,
             }
         });
-        console.log("Update loser successfully");
     }
 }
