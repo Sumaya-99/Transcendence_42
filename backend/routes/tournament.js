@@ -10,7 +10,6 @@ async function tournamentRoutes(fastify, options) {
   fastify.get('/tournament/:id', { preHandler: [authenticate, trackUserActivity] }, getTournament);
 
   fastify.patch('/tournament/:id/complete', { preHandler: [authenticate, trackUserActivity] }, completeTournament);
-  
 }
 
 export default tournamentRoutes;

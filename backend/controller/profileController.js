@@ -16,7 +16,8 @@ const sanitizedUserSelect = {
     gamesPlayed: true,
     wins: true,
     losses: true,
-    avatarUrl: true
+    avatarUrl: true,
+    isTwoFactorEnabled: true,
 }
 
 export async function getCurrentUser(req, reply) {
@@ -25,13 +26,23 @@ export async function getCurrentUser(req, reply) {
 	
 	const user = await prisma.user.findUnique({
 		where: {id: id},
-		select : sanitizedUserSelect,
-	})
+		select: {
+			...sanitizedUserSelect,
+			passwordHash: true // Only for backend logic
+		}
+	});
 
 	if (!user)
-		throw new notFoundError('user not found')
+		throw new notFoundError('user not found');
 
-	return reply.status(200).send({ user: user });
+	// Add hasPassword boolean and remove passwordHash before sending to frontend
+	const userForFrontend = {
+		...user,
+		hasPassword: !!user.passwordHash
+	};
+	delete userForFrontend.passwordHash;
+
+	return reply.status(200).send({ user: userForFrontend });
 }
 
 export async function updateUsername (req, reply)
@@ -44,8 +55,6 @@ export async function updateUsername (req, reply)
     if (!validator.isAlphanumeric(newUsername))
         throw new ValidationError("username should consist of letters and digits")
 
-    console.log('Received username:', req.body.newUsername);
-    console.log('Username length:', req.body.newUsername.length);
 	const updatedUser = await prisma.user.update({
 		where: {id: id},
 		data: {username: newUsername.trim()},
@@ -56,8 +65,6 @@ export async function updateUsername (req, reply)
 
 		}
 	})
-    console.log('Received username:', req.body.newUsername);
-    console.log('Username length:', req.body.newUsername.length);
 	return reply.status(200).send({message: 'username updated successfully'})
 }
 
@@ -82,7 +89,18 @@ export async function updatePassword (req, reply)
 	if (!user)
 		throw new notFoundError('user not found')
 
-	// Compare current password with stored hash
+	// If user has no password set (Google account), allow setting new password without current password
+	if (!user.passwordHash) {
+		// Hash the new password
+		const newPasswordHash = await bcrypt.hash(newPassword, 12);
+		await prisma.user.update({
+			where: { id: id },
+			data: { passwordHash: newPasswordHash }
+		});
+		return reply.status(200).send({ message: 'password set successfully' });
+	}
+
+	// Otherwise, require current password check as before
 	const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.passwordHash);
 	if (!isCurrentPasswordValid)
 		throw new AuthenticationError('password Incorrect');
@@ -135,7 +153,7 @@ export async function updateAvatar(req, reply)
 
 export async function updateStats(req, reply) {
     const userId = req.user.id; // Get user ID from JWT token
-    const { won, gameType = 'LOCAL', player1Score, player2Score, opponentName, gameDuration } = req.body;
+    const { won, gameType = 'LOCAL', player1Score, player2Score, opponentName, gameDuration, tournamentId = null } = req.body;
 
     if (typeof won !== 'boolean') {
         return reply.status(400).send({ error: 'won field must be a boolean' });
@@ -163,7 +181,7 @@ export async function updateStats(req, reply) {
         }
 
         // Save game result as a match record for all game types
-        if ((gameType === 'AI' || gameType === 'LOCAL' || gameType === 'MULTIPLAYER' || gameType === 'TOURNAMENT') && player1Score !== undefined && player2Score !== undefined) {
+        if ((gameType === 'AI' || gameType === 'LOCAL' || gameType === 'MULTIPLAYER') && player1Score !== undefined && player2Score !== undefined) {
             try {
                 // Determine player2Alias based on game type
                 let player2Alias;
@@ -181,9 +199,7 @@ export async function updateStats(req, reply) {
 
                 const match = await prisma.match.create({
                     data: {
-                        tournamentId: gameType === 'TOURNAMENT' ? 1 : null, // Set tournament ID for tournament games
-                        roundNumber: 1,
-                        matchNumber: 1,
+                        tournamentId: gameType === 'TOURNAMENT' && tournamentId ? tournamentId : null, // Set tournament ID for tournament games
                         status: 'FINISHED',
                         player1Alias: user.username,
                         player2Alias: player2Alias,

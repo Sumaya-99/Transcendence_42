@@ -56,7 +56,7 @@ export class DashboardService {
                 }
             };
         } catch (error) {
-            console.error('Error getting user dashboard:', error);
+            // Error getting user dashboard
             throw new Error('Failed to load dashboard data');
         }
     }
@@ -93,7 +93,7 @@ export class DashboardService {
                 }
             };
         } catch (error) {
-            console.error('Error getting general dashboard:', error);
+            // Error getting general dashboard
             throw new Error('Failed to load general dashboard data');
         }
     }
@@ -115,7 +115,6 @@ export class DashboardService {
                     wins: 0,
                     losses: 0,
                     winRate: 0,
-                    difficultyStats: {},
                     recentGames: [],
                     averageScore: 0,
                     bestScore: 0,
@@ -153,8 +152,6 @@ export class DashboardService {
             const losses = totalGames - wins;
             const winRate = totalGames > 0 ? (wins / totalGames * 100).toFixed(1) : 0;
 
-            // Get difficulty breakdown
-            const difficultyStats = await this.getAIGameDifficultyStats();
 
             // Get recent AI game performance
             const recentAIGames = await prisma.match.findMany({
@@ -175,15 +172,14 @@ export class DashboardService {
                 wins,
                 losses,
                 winRate: parseFloat(winRate),
-                difficultyStats,
                 recentGames: recentAIGames,
-                averageScore: await this.calculateAverageScore('AI'),
-                bestScore: await this.getBestScore('AI'),
-                longestWinStreak: await this.getLongestWinStreak('AI'),
-                currentStreak: await this.getCurrentStreak('AI')
+                averageScore: await this.calculateAverageScore('AI', user.username),
+                bestScore: await this.getBestScore('AI', user.username),
+                longestWinStreak: await this.getLongestWinStreak('AI', user.username),
+                currentStreak: await this.getCurrentStreak('AI', user.username)
             };
         } catch (error) {
-            console.error('Error getting AI game stats:', error);
+            // Error getting AI game stats
             throw error;
         }
     }
@@ -265,7 +261,7 @@ export class DashboardService {
                 averageScore: parseFloat(averageScore)
             };
         } catch (error) {
-            console.error('Error getting local game stats:', error);
+            // Error getting local game stats
             throw error;
         }
     }
@@ -336,13 +332,13 @@ export class DashboardService {
                 losses,
                 winRate: parseFloat(winRate),
                 opponentStats,
-                averageScore: await this.calculateAverageScore('multiplayer'),
-                bestScore: await this.getBestScore('multiplayer'),
-                longestWinStreak: await this.getLongestWinStreak('multiplayer'),
-                currentStreak: await this.getCurrentStreak('multiplayer')
+                averageScore: await this.calculateAverageScore('multiplayer', user.username),
+                bestScore: await this.getBestScore('multiplayer', user.username),
+                longestWinStreak: await this.getLongestWinStreak('multiplayer', user.username),
+                currentStreak: await this.getCurrentStreak('multiplayer', user.username)
             };
         } catch (error) {
-            console.error('Error getting multiplayer stats:', error);
+            // Error getting multiplayer stats
             throw error;
         }
     }
@@ -386,7 +382,7 @@ export class DashboardService {
                 bestScore: 0     // Would need to calculate from match players
             };
         } catch (error) {
-            console.error('Error getting general multiplayer stats:', error);
+            // Error getting general multiplayer stats
             throw error;
         }
     }
@@ -413,10 +409,13 @@ export class DashboardService {
                 };
             }
 
-            // Count tournament games (matches with tournamentId not null)
+            // Count tournament games (matches with tournamentId not null) - check both player1 and player2
             const totalGames = await prisma.match.count({
                 where: {
-                    player1Alias: user.username,
+                    OR: [
+                        { player1Alias: user.username },
+                        { player2Alias: user.username }
+                    ],
                     tournamentId: { not: null }, // Only tournament games
                     status: 'FINISHED'
                 }
@@ -424,7 +423,10 @@ export class DashboardService {
 
             const wins = await prisma.match.count({
                 where: {
-                    player1Alias: user.username,
+                    OR: [
+                        { player1Alias: user.username },
+                        { player2Alias: user.username }
+                    ],
                     tournamentId: { not: null }, // Only tournament games
                     status: 'FINISHED',
                     winnerAlias: user.username
@@ -434,11 +436,14 @@ export class DashboardService {
             const losses = totalGames - wins;
             const winRate = totalGames > 0 ? (wins / totalGames * 100).toFixed(1) : 0;
 
-            // Get best and average scores for tournament games
+            // Get best and average scores for tournament games - check both player1 and player2
             const matchPlayers = await prisma.matchPlayer.findMany({
                 where: {
                     match: {
-                        player1Alias: user.username,
+                        OR: [
+                            { player1Alias: user.username },
+                            { player2Alias: user.username }
+                        ],
                         tournamentId: { not: null },
                         status: 'FINISHED'
                     },
@@ -460,7 +465,7 @@ export class DashboardService {
                 averageScore
             };
         } catch (error) {
-            console.error('Error getting tournament stats:', error);
+            // Error getting tournament stats
             throw error;
         }
     }
@@ -477,11 +482,11 @@ export class DashboardService {
             });
 
             if (!user) {
-                console.log('❌ No user found for userId:', userId);
+                // No user found for userId
                 return [];
             }
 
-            console.log('🔍 Looking for recent games for user:', user.username);
+            // Looking for recent games for user
 
             const recentGames = await prisma.match.findMany({
                 where: {
@@ -489,6 +494,16 @@ export class DashboardService {
                         { player1Alias: user.username },
                         { player2Alias: user.username }
                     ],
+                    AND: [
+                        { status: 'FINISHED' },
+                        { startedAt: { not: null } },
+                        { 
+                            OR: [
+                                { winnerAlias: { not: null } },
+                                { finishedAt: { not: null } } 
+                            ]
+                        }
+                    ]
                 },
                 include: {
                     players: true,
@@ -498,8 +513,7 @@ export class DashboardService {
                 take: limit
             });
 
-            console.log('🎮 Found recent games:', recentGames.length, 'games');
-            console.log('🎮 Recent games data:', recentGames);
+            // Found recent games
 
             return recentGames.map(game => {
                 const playerScore = game.players.find(p => p.alias === user.username)?.score || 0;
@@ -539,7 +553,7 @@ export class DashboardService {
                 };
             });
         } catch (error) {
-            console.error('Error getting recent games:', error);
+            // Error getting recent games
             throw error;
         }
     }
@@ -573,7 +587,7 @@ export class DashboardService {
                 peakPerformance: await this.getPeakPerformance(userId)
             };
         } catch (error) {
-            console.error('Error getting performance metrics:', error);
+            // Error getting performance metrics
             throw error;
         }
     }
@@ -620,7 +634,7 @@ export class DashboardService {
                 progress: this.getAchievementProgress(achievement, userStats)
             }));
         } catch (error) {
-            console.error('Error getting user achievements:', error);
+            // Error getting user achievements
             return [];
         }
     }
@@ -761,15 +775,6 @@ export class DashboardService {
     /**
      * Helper Methods
      */
-    static async getAIGameDifficultyStats() {
-        // This would be implemented when difficulty tracking is added to the database
-        return {
-            EASY: { games: 0, wins: 0, winRate: 0 },
-            MEDIUM: { games: 0, wins: 0, winRate: 0 },
-            HARD: { games: 0, wins: 0, winRate: 0 },
-            EXPERT: { games: 0, wins: 0, winRate: 0 }
-        };
-    }
 
     static async getOpponentStats() {
         try {
@@ -793,12 +798,17 @@ export class DashboardService {
         }
     }
 
-    static async calculateAverageScore(gameType) {
+    static async calculateAverageScore(gameType, username) {
         try {
             const matches = await prisma.match.findMany({
                 where: {
                     status: 'FINISHED',
-                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' }
+                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' },
+                    OR: [
+                        { player1Alias: username },
+                        { player2Alias: username },
+                        { players: { some: { alias: username } } }
+                    ]
                 },
                 include: { players: true }
             });
@@ -806,23 +816,28 @@ export class DashboardService {
             if (matches.length === 0) return 0;
 
             const totalScore = matches.reduce((sum, match) => {
-                const playerScore = match.players.find(p => p.alias === 'Player')?.score || 0;
+                const playerScore = match.players.find(p => p.alias === username)?.score || 0;
                 return sum + playerScore;
             }, 0);
 
             return Math.round(totalScore / matches.length);
         } catch (error) {
-            console.error('Error calculating average score:', error);
+            // Error calculating average score
             return 0;
         }
     }
 
-    static async getBestScore(gameType) {
+    static async getBestScore(gameType, username) {
         try {
             const matches = await prisma.match.findMany({
                 where: {
                     status: 'FINISHED',
-                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' }
+                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' },
+                    OR: [
+                        { player1Alias: username },
+                        { player2Alias: username },
+                        { players: { some: { alias: username } } }
+                    ]
                 },
                 include: { players: true }
             });
@@ -830,7 +845,7 @@ export class DashboardService {
             if (matches.length === 0) return 0;
 
             const bestScore = Math.max(...matches.map(match => {
-                const playerScore = match.players.find(p => p.alias === 'Player')?.score || 0;
+                const playerScore = match.players.find(p => p.alias === username)?.score || 0;
                 return playerScore;
             }));
 
@@ -840,12 +855,17 @@ export class DashboardService {
         }
     }
 
-    static async getLongestWinStreak(gameType) {
+    static async getLongestWinStreak(gameType, username) {
         try {
             const matches = await prisma.match.findMany({
                 where: {
                     status: 'FINISHED',
-                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' }
+                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' },
+                    OR: [
+                        { player1Alias: username },
+                        { player2Alias: username },
+                        { players: { some: { alias: username } } }
+                    ]
                 },
                 include: { players: true },
                 orderBy: { finishedAt: 'asc' }
@@ -857,7 +877,7 @@ export class DashboardService {
             let longestStreak = 0;
 
             for (const match of matches) {
-                const playerWon = match.players.find(p => p.alias === 'Player')?.result === 'WIN';
+                const playerWon = match.players.find(p => p.alias === username)?.result === 'WIN';
                 
                 if (playerWon) {
                     currentStreak++;
@@ -869,17 +889,22 @@ export class DashboardService {
 
             return longestStreak;
         } catch (error) {
-            console.error('Error calculating longest win streak:', error);
+            // Error calculating longest win streak
             return 0;
         }
     }
 
-    static async getCurrentStreak(gameType) {
+    static async getCurrentStreak(gameType, username) {
         try {
             const matches = await prisma.match.findMany({
                 where: {
                     status: 'FINISHED',
-                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' }
+                    player2Alias: gameType === 'AI' ? 'AI' : { not: 'AI' },
+                    OR: [
+                        { player1Alias: username },
+                        { player2Alias: username },
+                        { players: { some: { alias: username } } }
+                    ]
                 },
                 include: { players: true },
                 orderBy: { finishedAt: 'desc' }
@@ -890,7 +915,7 @@ export class DashboardService {
             let currentStreak = 0;
 
             for (const match of matches) {
-                const playerWon = match.players.find(p => p.alias === 'Player')?.result === 'WIN';
+                const playerWon = match.players.find(p => p.alias === username)?.result === 'WIN';
                 
                 if (playerWon) {
                     currentStreak++;
@@ -901,7 +926,7 @@ export class DashboardService {
 
             return currentStreak;
         } catch (error) {
-            console.error('Error calculating current streak:', error);
+            // Error calculating current streak
             return 0;
         }
     }
@@ -926,7 +951,7 @@ export class DashboardService {
 
             return tournament;
         } catch (error) {
-            console.error('Error getting current tournament:', error);
+            // Error getting current tournament
             return null;
         }
     }

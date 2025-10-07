@@ -52,6 +52,10 @@ model User {
   lastSeen     DateTime @default(now())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  isEmailVerified Boolean @default(false)
+  originalUsername  String? 
+  originalEmail     String?  
+
 
   // Game statistics
   gamesPlayed  Int      @default(0)
@@ -179,8 +183,6 @@ model TournamentMatch {
 model Match {
   id           Int         @id @default(autoincrement())
   tournamentId Int?
-  roundNumber  Int
-  matchNumber  Int
   status       MatchStatus @default(PENDING)
 
   player1Alias String
@@ -193,10 +195,6 @@ model Match {
 
   tournament Tournament?   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   players    MatchPlayer[] // this is not a relation, it just says that it has multiple players
-
-  @@unique([tournamentId, roundNumber, matchNumber])
-  @@index([tournamentId])
-  @@index([tournamentId, roundNumber])
 }
 
 model MatchPlayer {
